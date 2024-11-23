@@ -200,19 +200,19 @@ def plot_task_performance_by_conditions(
     import seaborn as sns
     import math
 
-    # Extract unique thresholds
+    
     thresholds = [x/100 for x in range(12)]
-    # sorted(set(threshold for noise, threshold in noise_threshold_pairs))
+    
 
     num_thresholds = len(thresholds)
-    # Determine grid size for subplots
-    n_cols = 4  # Adjust number of columns as needed
+    
+    n_cols = 4  
     n_rows = math.ceil(num_thresholds / n_cols)
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows), sharey=True)
     axes = axes.flatten() if num_thresholds > 1 else [axes]
 
-    # performance_df = performance_df[performance_df['group'] != 'unknown']
+    
 
     for idx, threshold in enumerate(thresholds):
         ax = axes[idx]
@@ -222,7 +222,7 @@ def plot_task_performance_by_conditions(
             print(f"No data available for threshold={threshold}")
             continue
 
-        # Prepare data for plotting
+        
         melted = pd.melt(
             subset,
             id_vars=['group', 'familiarity', 'noise'],
@@ -231,23 +231,23 @@ def plot_task_performance_by_conditions(
             value_name='Correct'
         )
 
-        # Map task names to readable format
+        
         task_mapping = {
             'picture_task_is_correct': 'Picture Task',
             'id_task_is_correct': 'Person Task'
         }
         melted['Task'] = melted['Task'].map(task_mapping)
 
-        # Create a combined 'Task-Familiarity' column
+        
         melted['Task-Familiarity'] = melted['Task'] + ' - ' + melted['familiarity']
 
-        # Create a 'Condition' column
+        
         melted['Condition'] = melted['group'] + ' - ' + melted['Task-Familiarity']
 
-        # Calculate mean success rates
+        
         grouped = melted.groupby(['Condition', 'noise'])['Correct'].mean().reset_index()
 
-        # Plot using seaborn
+        
         sns.barplot(
             data=grouped,
             x='Condition',
@@ -268,7 +268,7 @@ def plot_task_performance_by_conditions(
             handles, labels = ax.get_legend_handles_labels()
             ax.legend_.remove()
 
-    # Create one legend for the entire figure (if handles and labels are available)
+    
     if handles and labels:
         fig.legend(
             handles,
@@ -279,15 +279,15 @@ def plot_task_performance_by_conditions(
             loc='upper right'
         )
 
-    # Remove any empty subplots
+    
     for idx in range(len(thresholds), len(axes)):
         fig.delaxes(axes[idx])
 
-    # Adjust layout
+    
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.suptitle(f"{title} for Model: {model_name}", fontsize=16)
 
-    # Save and close
+    
     plot_path = os.path.join(export_path, f"{title.replace(' ', '_')}_model={model_name}.png")
     plt.savefig(plot_path)
     plt.close()
@@ -299,7 +299,7 @@ def plot_difference_heatmap(df, l):
     Parameters:
     - df (pd.DataFrame): DataFrame containing accuracy data for the models.
     """
-    # Filter data for the two models
+    
     df['noise'] = pd.to_numeric(df['noise'], errors='coerce')
     df['threshold'] = pd.to_numeric(df['threshold'], errors='coerce')
     df = df[df['familiarity'] == 'familiar']
@@ -311,27 +311,26 @@ def plot_difference_heatmap(df, l):
     modelC_fc7 = df[df['Model-Layer'] == f'modelC_{l}']
     modelB_fc7 = df[df['Model-Layer'] == f'modelB_{l}']
 
-    # Merge on group, threshold, and noise to compare models
+    
     merged_df = pd.merge(modelC_fc7, modelB_fc7, on=['group', 'threshold', 'noise'], suffixes=('_A', '_B'))
 
-    # Calculate the difference in accuracy between the two models
+    
     merged_df['accuracy_diff'] = merged_df['id_task_is_correct_A'] - merged_df['id_task_is_correct_B']
-    # Pivot the DataFrame to create the heatmap data
+    
     groups = merged_df['group'].unique()
     for g in groups:
         g_df = merged_df.copy()
         g_df = g_df[g_df['group'] == g].copy()
         heatmap_data = g_df.pivot_table(index='noise', columns='threshold', values='accuracy_diff')
-
-        # Plot the heatmap
+        
         plt.figure(figsize=(11, 8))
 
         ax = sns.heatmap(heatmap_data, cmap='coolwarm', center=0, annot=None, fmt='.2f', 
                     cbar_kws={'label': 'Accuracy Difference (%)'})
         
         cbar = ax.collections[0].colorbar
-        cbar.ax.tick_params(labelsize=12)  # Change the color bar tick labels font size
-        cbar.set_label('Accuracy Difference (%)', fontsize=18)  # Set the color bar label font size
+        cbar.ax.tick_params(labelsize=12)  
+        cbar.set_label('Accuracy Difference (%)', fontsize=18)  
         plt.gca().invert_yaxis()
         plt.title(f'Difference in Accuracy between Models C and Model B, Layer {l}', fontsize=18)
         plt.xlabel('Threshold', fontsize = 18)
@@ -343,117 +342,68 @@ def plot_difference_heatmap(df, l):
         plt.close()
 
 def calculate_accuracy(df):
-    """
-    Calculate accuracy for each combination of model, task, noise, threshold, and group.
-
-    Parameters:
-    - df (pd.DataFrame): DataFrame containing experimental data.
-
-    Returns:
-    - pd.DataFrame: DataFrame with calculated accuracies.
-    """
     accuracy_df = df.groupby(['Model-Layer', 'threshold', 'noise', 'group', 'familiarity']).agg(
         person_accuracy=('id_task_is_correct', 'mean'),
         image_accuracy=('picture_task_is_correct', 'mean')
     ).reset_index()
-
-    # Convert accuracy to percentage
+    
     accuracy_df['person_accuracy'] = accuracy_df['person_accuracy'] * 100
     accuracy_df['image_accuracy'] = accuracy_df['image_accuracy'] * 100
 
     return accuracy_df
 
 def plot_accuracy_vs_threshold(model, group, accuracy_melted):
-    """
-    Plot accuracy vs. threshold level for a specific model and group, differentiated by conditions and noise levels.
-    
-    Parameters:
-    - model (str): Model identifier.
-    - group (str): Group identifier.
-    - accuracy_melted (pd.DataFrame): Melted DataFrame with accuracy data.
-    """
     plt.rc('font', family='Times New Roman')
 
-    # Filter the subset for the specific model and group
     subset = accuracy_melted[
         (accuracy_melted['Model-Layer'] == model) & 
         (accuracy_melted['group'] == group)
     ].copy()
 
-    # # Ensure 'familiarity' contains only the desired conditions
-    # desired_conditions = ['Unseen', 'Same', 'Different']
-    # subset = subset[subset['group'].isin(desired_conditions)]
-
-    # Convert 'threshold' and 'accuracy' to numeric, coercing errors to NaN
     subset['threshold'] = pd.to_numeric(subset['threshold'], errors='coerce')
     subset['accuracy'] = pd.to_numeric(subset['accuracy'], errors='coerce')
-
-    # Drop rows with NaN values in 'threshold' or 'accuracy'
     subset = subset.dropna(subset=['threshold', 'accuracy'])
 
-    # Set the Seaborn theme for better aesthetics
     sns.set_theme(style="whitegrid")
+    plt.figure(figsize=(12, 10))  
 
-    plt.figure(figsize=(12, 10))  # Increased figure size for clarity
-
-    # Define a palette that can handle both conditions and noise levels
     palette = sns.color_palette("viridis", n_colors=len(subset['familiarity'].unique()))
 
-    # Plot using seaborn's lineplot, differentiating by 'familiarity' and 'noise'
     sns.lineplot(
         data=subset,
         x='threshold',
         y='accuracy',
-        hue='familiarity',       # Differentiate by condition
-        style='task',           # Differentiate by noise level
+        hue='familiarity',       
+        style='task',           
         markers=True,
         dashes=['', (2,2)],
         palette=palette,
         linewidth=2.5,
         markersize=10,
-        legend=False
     )
 
-    # Customize the plot
     plt.title(f'Accuracy vs. Threshold Level for {model} - Group {group}', fontsize=24)
     plt.xlabel('Threshold Level', fontsize=24)
     plt.ylabel('Accuracy (%)', fontsize=24)
 
-    # Access the current axes
     ax = plt.gca()
-
-    # Set major and minor tick locators for x-axis
     major_tick_spacing = x_ticks
     minor_tick_spacing = x_ticks / 2 
     ax.xaxis.set_major_locator(MultipleLocator(major_tick_spacing))
-    # ax.xaxis.set_minor_locator(MultipleLocator(minor_tick_spacing))
-
-    # Similarly, set major and minor tick locators for y-axis
-    major_y_spacing = 10  # Major ticks every 10%
-    minor_y_spacing = 2   # 2 minor ticks between each major tick
+    
+    major_y_spacing = 10  
+    minor_y_spacing = 2   
     ax.yaxis.set_major_locator(MultipleLocator(major_y_spacing))
-    # ax.yaxis.set_minor_locator(MultipleLocator(minor_y_spacing))
-
-    # Enable minor ticks
-    # ax.minorticks_on()
-
-    # Customize tick parameters to make minor ticks visible
+    
     ax.tick_params(axis='x', which='major', labelsize=14, length=10, width=1.5)
-    # ax.tick_params(axis='x', which='minor', labelsize=10, length=5, width=1)
     ax.tick_params(axis='y', which='major', labelsize=14, length=10, width=1.5)
-    # ax.tick_params(axis='y', which='minor', labelsize=10, length=5, width=1)
-
-    # Add minor gridlines for better readability
-    # ax.grid(which='minor', linestyle=':', linewidth=0.5, color='gray')
-
-    # Rotate x-axis labels if they overlap
+   
     plt.xticks(rotation=45)
 
-    # Adjust legend to include both 'familiarity' and 'noise'
     handles, labels = ax.get_legend_handles_labels()
-    # Create custom legend handles if necessary
+    
     plt.legend(
-            # bbox_to_anchor=(1.05, 1), 
+            bbox_to_anchor=(1.05, 1), 
             frameon=True,
             loc='lower right', 
             fontsize=16)
@@ -461,14 +411,11 @@ def plot_accuracy_vs_threshold(model, group, accuracy_melted):
     ax.set_xlim(-(x_ticks/2), t_max+(x_ticks/2))
     plt.tight_layout()
 
-    # Define the directory to save the plot
     save_dir = os.path.join(export ,model)
-    os.makedirs(save_dir, exist_ok=True)  # Create the directory if it doesn't exist
-
-    # Define the filename
+    os.makedirs(save_dir, exist_ok=True)  
+ 
     filename = f'{group}-accuracy_vs_threshold.png'
-
-    # Save the plot
+  
     plt.savefig(os.path.join(export, model, filename), dpi=300)
     plt.close()
 
@@ -481,22 +428,19 @@ def generate_impact_of_noise_on_accuracy(df):
     Parameters:
     - df (pd.DataFrame): DataFrame containing experimental data.
     """
-    accuracy_df = calculate_accuracy(df)
-    # Melt the DataFrame for easier plotting
+    accuracy_df = calculate_accuracy(df)  
     accuracy_melted = accuracy_df.melt(
         id_vars=['Model-Layer', 'threshold', 'noise', 'group','familiarity'],
         value_vars=['person_accuracy', 'image_accuracy'],
         var_name='task',
         value_name='accuracy'
     )
-
-    # Rename task values for clarity
+    
     accuracy_melted['task'] = accuracy_melted['task'].map({
         'person_accuracy': 'Person Recognition',
         'image_accuracy': 'Image Recognition'
     })
 
-    # models = accuracy_melted['Model-Layer'].unique()
     models = ['modelC_fc7', 'modelC_conv5']
     groups = accuracy_melted['group'].unique()
 
@@ -504,7 +448,6 @@ def generate_impact_of_noise_on_accuracy(df):
         for g in groups:
             plot_accuracy_vs_threshold(m, g, accuracy_melted)
 
-# df = pd.read_csv('/home/new_storage/experiments/face_memory_task/code results/2024-11-22/final2/combined_modelC_conv5-modelC_fc7-adva_idan_model_conv5-adva_idan_model_fc7.csv')
 df = pd.read_csv('/home/new_storage/experiments/face_memory_task/code results/n_0-100-2.5/combined_modelC_conv5-modelC_fc7-modelB_conv5-modelB_fc7.csv')
 t_max = 1
 export = os.path.join(os.getcwd(), 'final_vis', f'0-{t_max}_half')
@@ -513,7 +456,6 @@ generate_impact_of_noise_on_accuracy(df)
 
 data_file_path = '/home/new_storage/experiments/face_memory_task/code results/n_0-100-2.5/combined_modelC_conv5-modelC_fc7-modelB_conv5-modelB_fc7.csv'
 df = pd.read_csv(data_file_path)
-# Generate the plots
 
 plot_difference_heatmap(df, 'fc7')
 plot_difference_heatmap(df, 'conv5')
