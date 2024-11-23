@@ -1,34 +1,17 @@
 import os
 import random
 import pandas as pd
-import itertools
-import matplotlib.pyplot as plt
-import seaborn as sns
-from datetime import date
 import torch
 import torch.nn as nn
 from torchvision import transforms
-from torch.utils.data import DataLoader, Dataset
 from PIL import Image
-
-num_gpus = torch.cuda.device_count()
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Number of GPUs available: {num_gpus}")
-print(f"Using device: {device}")
-
-def clear_console():
-    """Clears the console."""
-    command = 'clear'
-    if os.name in ('nt', 'dos'):
-        command = 'cls'
-    os.system(command)
 
 ### Helper Functions ###
 
 def open_image(image_path):
     image = Image.open(image_path)
     preprocess = transforms.Compose([
-        transforms.Resize((224, 256)),
+        transforms.Resize((224, 256)), # 224, 224
         transforms.ToTensor(),  # Convert the image to a tensor
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),  # Normalize
         ])
@@ -42,7 +25,7 @@ def add_noise(dic, std_dev):
         noise_tensor = torch.randn_like(a_tensor) * float(std_dev)
         dic[path]= a_tensor+noise_tensor
 
-def create_long_term_memory(model, base_dir, sub_folder, save_path):
+def create_long_term_memory(model, base_dir, sub_folder, export_path):
     ltm = dict()
     train_dir = os.path.join(base_dir, sub_folder, 'train')
     if os.path.exists(train_dir):
@@ -55,18 +38,16 @@ def create_long_term_memory(model, base_dir, sub_folder, save_path):
             for image in images:
                 image_path = os.path.join(identity_dir, image)
                 processed_image = open_image(image_path)
-                tensor = model.get_output(processed_image)
+                output_dict = model.get_output(processed_image)
+                tensor = output_dict[next(iter(output_dict.keys()))]
                 imgs_tensors.append(tensor)
             ltm[identity] = torch.stack(imgs_tensors).mean(dim=0)
     else:
         raise Exception(f"Path does not exist: {train_dir}")
-
-    torch.save(ltm, save_path)
+    
+    ltm_path = os.path.join(export_path, f'{model.model_name}_longTermMemory.pth')
+    torch.save(ltm, ltm_path)
     return ltm
-
-def load_long_term_memory(save_path):
-    identities_memory = torch.load(save_path)
-    return identities_memory
 
 def find_closest(report_tensor, short_term_memory, long_term_memory):
     st_closest_img = None
@@ -76,7 +57,6 @@ def find_closest(report_tensor, short_term_memory, long_term_memory):
     lt_closest_identity = None
     lt_closest_distance = 1
 
-    memory_origin = 0
     cos = nn.CosineSimilarity(dim=1, eps=1e-6)
     for key, from_mem in short_term_memory.items():
         distance = 1-cos(report_tensor, from_mem)
@@ -113,14 +93,14 @@ def process_folders(base_dir, sub_folders):
 
             same_group = identities[:33]
             diff_group = identities[33:66]
-            unknown_group = identities[66:99]
+            Unseen_group = identities[66:99]
 
             for identity in same_group:
                 df = process_same_group(test_dir, identity, df, familiarity)
             for identity in diff_group:
                 df = process_diff_group(test_dir, identity, df, familiarity)
-            for identity in unknown_group:
-                df = process_unknown_group(test_dir, identity, df, familiarity)
+            for identity in Unseen_group:
+                df = process_Unseen_group(test_dir, identity, df, familiarity)
     return df
 
 def process_same_group(base_dir, identity, df, familiarity):
@@ -129,7 +109,7 @@ def process_same_group(base_dir, identity, df, familiarity):
     if images:
         image = random.choice(images)
         image_path = os.path.join(identity_dir, image)
-        new_row = pd.DataFrame({'identity': [identity], 'familiarity': [familiarity], 'group': ['same'], 'stage_a_img_path': [image_path], 'stage_b_img_path': [image_path]})
+        new_row = pd.DataFrame({'identity': [identity], 'familiarity': [familiarity], 'group': ['Same'], 'stage_a_img_path': [image_path], 'stage_b_img_path': [image_path]})
         df = pd.concat([df, new_row], ignore_index=True)
     return df
 
@@ -140,17 +120,17 @@ def process_diff_group(base_dir, identity, df, familiarity):
         image_a, image_b = random.sample(images, 2)
         image_a_path = os.path.join(identity_dir, image_a)
         image_b_path = os.path.join(identity_dir, image_b)
-        new_row = pd.DataFrame({'identity': [identity], 'familiarity': [familiarity], 'group': ['diff'], 'stage_a_img_path': [image_a_path], 'stage_b_img_path': [image_b_path]})
+        new_row = pd.DataFrame({'identity': [identity], 'familiarity': [familiarity], 'group': ['Diff'], 'stage_a_img_path': [image_a_path], 'stage_b_img_path': [image_b_path]})
         df = pd.concat([df, new_row], ignore_index=True)
     return df
 
-def process_unknown_group(base_dir, identity, df, familiarity):
+def process_Unseen_group(base_dir, identity, df, familiarity):
     identity_dir = os.path.join(base_dir, identity)
     images = [f for f in os.listdir(identity_dir) if os.path.isfile(os.path.join(identity_dir, f))]
     if images:
         image = random.choice(images)
         image_path = os.path.join(identity_dir, image)
-        new_row = pd.DataFrame({'identity': [identity], 'familiarity': [familiarity], 'group': ['unknown'], 'stage_a_img_path': [None], 'stage_b_img_path': [image_path]})
+        new_row = pd.DataFrame({'identity': [identity], 'familiarity': [familiarity], 'group': ['Unseen'], 'stage_a_img_path': [None], 'stage_b_img_path': [image_path]})
         df = pd.concat([df, new_row], ignore_index=True)
     return df
 
@@ -161,7 +141,8 @@ def study_stage(model, grouped_images_df, noise):
     for img_path in grouped_images_df["stage_a_img_path"]:
         if img_path:
             processed_image = open_image(img_path)
-            tensor = model.get_output(processed_image)
+            output_dict = model.get_output(processed_image)
+            tensor = output_dict[next(iter(output_dict.keys()))]
             memory[img_path] = tensor
             add_noise(memory, noise)
     return memory
@@ -171,12 +152,13 @@ def study_stage(model, grouped_images_df, noise):
 def report_stage_process_record(record, nnModel, st_memory, lt_memory):
     img_path = record.get('stage_b_img_path', record.get('image_path'))
     processed_image = open_image(img_path)
-    tensor = nnModel.get_output(processed_image)
+    output_dict = nnModel.get_output(processed_image)
+    tensor = output_dict[next(iter(output_dict.keys()))]
     stm_closest_img_path, stm_closest_identity, stm_closest_distance, ltm_closest_identity, ltm_closest_distance = find_closest(tensor, st_memory, lt_memory)
 
-    same_image = int(img_path == stm_closest_img_path)
-    stm_same_id = int(record['identity'] == stm_closest_identity)
-    ltm_same_id = int(record['identity'] == ltm_closest_identity)
+    same_image = int(os.path.normpath(img_path) == os.path.normpath(stm_closest_img_path)) if stm_closest_img_path else 0
+    stm_same_id = int(record['identity'] == stm_closest_identity) if stm_closest_identity else 0
+    ltm_same_id = int(record['identity'] == ltm_closest_identity) if ltm_closest_identity else 0
 
     return {
         'familiarity': record['familiarity'],
@@ -223,139 +205,180 @@ def single_experiment_by_noise(nnModel, grouped_images_df, long_term_memory, pat
     # performance_df.to_csv(os.path.join(path_to_save, f'{nnModel.name}_performance_noise={noise}.csv'))
     return performance_df
 
-def simulate_different_noises(nnModel, long_term_memory, grouped_images_df, noise_constants):
-    path = f'{os.getcwd()}/code results/{nnModel.name}-{date.today()}'
-    try:
-        os.mkdir(path)
-    except:
-        pass
-
+def simulate_different_noises(nnModel, long_term_memory, grouped_images_df, noise_constants, export_path):
     results = []
     i = 1
     n_min = min(noise_constants)
     n_max = max(noise_constants)
 
     for noise in noise_constants:
-        performance_df = single_experiment_by_noise(nnModel, grouped_images_df, long_term_memory, path, noise)
+        performance_df = single_experiment_by_noise(nnModel, grouped_images_df, long_term_memory, export_path, noise)
         performance_df['noise'] = noise
         results.append(performance_df)
-        # clear_console()
-        print(f"Simulating Noise = {noise}...")
+        print(f"{nnModel.model_name}, simulating noise = {noise}...")
         i += 1
 
     all_results_df = pd.concat(results, ignore_index=True)
-    all_results_df.to_csv(os.path.join(path, f'{nnModel.name}_noise={n_min}-{n_max}_performance.csv'))
+    all_results_df.to_csv(os.path.join(export_path, f'{nnModel.model_name}_noise={n_min}-{n_max}_performance.csv'))
     return all_results_df
 
 ### Performance Evaluation Stage ###
 
-def eval_performance_for_thershold(perf_df: pd.DataFrame, threshold: float) -> pd.DataFrame:
+def eval_performance_for_threshold(perf_df, threshold):
     res_df = perf_df.copy()
 
-    res_df['img_task_is_correct'] = 0
+    res_df['picture_task_is_correct'] = 0
     res_df['stm_id_task_is_correct'] = 0
     res_df['ltm_id_task_is_correct'] = 0
     res_df['id_task_is_correct'] = 0
     res_df['threshold'] = threshold
 
-    same_group = res_df['group'] == 'same'
-    diff_group = res_df['group'] == 'diff'
-    unknown_group = res_df['group'] == 'unknown'
+    same_group = res_df['group'] == 'Same'
+    diff_group = res_df['group'] == 'Diff'
+    Unseen_group = res_df['group'] == 'Unseen'
 
-    # Conditions for 'same' group
-    res_df.loc[same_group & (res_df['stm_distance'] < threshold), 'img_task_is_correct'] = res_df['same_image']
-    res_df.loc[same_group & (res_df['stm_distance'] < threshold), 'stm_id_task_is_correct'] = res_df['stm_same_id']
-    res_df.loc[same_group & (res_df['ltm_distance'] < threshold), 'ltm_id_task_is_correct'] = res_df['ltm_same_id']
-    res_df.loc[same_group & ((res_df['stm_distance'] < threshold) | (res_df['ltm_distance'] < threshold)), 'id_task_is_correct'] = 1
+    # --- Same Group ---
+    # Image Task Success: Recognized same image in STM
+    mask = same_group & (res_df['stm_distance'] < threshold)
+    res_df.loc[mask, 'picture_task_is_correct'] = res_df.loc[mask, 'same_image']
 
-    # Conditions for 'diff' group
-    res_df.loc[diff_group & (res_df['stm_distance'] > threshold), 'img_task_is_correct'] = 1
-    res_df.loc[diff_group & (res_df['stm_distance'] < threshold), 'stm_id_task_is_correct'] = res_df['stm_same_id']
-    res_df.loc[diff_group & (res_df['ltm_distance'] < threshold), 'ltm_id_task_is_correct'] = res_df['ltm_same_id']
-    res_df.loc[diff_group & ((res_df['stm_distance'] < threshold) | (res_df['ltm_distance'] < threshold)), 'id_task_is_correct'] = 1
+    # STM Identity Task Success: Recognized correct identity in STM
+    mask = same_group & (res_df['stm_distance'] < threshold)
+    res_df.loc[mask, 'stm_id_task_is_correct'] = res_df.loc[mask, 'stm_same_id']
 
-    # Conditions for 'unknown' group
-    res_df.loc[unknown_group & (res_df['stm_distance'] > threshold), 'img_task_is_correct'] = 1
-    res_df.loc[unknown_group & (res_df['stm_distance'] > threshold), 'stm_id_task_is_correct'] = 1
-    res_df.loc[unknown_group & (res_df['ltm_distance'] > threshold), 'ltm_id_task_is_correct'] = 1
-    res_df.loc[unknown_group & ((res_df['stm_distance'] > threshold) & (res_df['ltm_distance'] > threshold)), 'id_task_is_correct'] = 1
+    # LTM Identity Task Success: Recognized correct identity in LTM
+    mask = same_group & (res_df['ltm_distance'] < threshold)
+    res_df.loc[mask, 'ltm_id_task_is_correct'] = res_df.loc[mask, 'ltm_same_id']
+
+    # Overall Identity Task Success: Correct identity recognized in STM or LTM
+    mask = same_group & (
+        ((res_df['stm_distance'] < threshold) & (res_df['stm_same_id'] == 1)) |
+        ((res_df['ltm_distance'] < threshold) & (res_df['ltm_same_id'] == 1))
+    )
+    res_df.loc[mask, 'id_task_is_correct'] = 1
+
+    # --- Different Group ---
+    # Image Task Success: Model didn't recognize the image
+    mask = diff_group & (res_df['stm_distance'] > threshold) & (res_df['ltm_distance'] > threshold)
+    res_df.loc[mask, 'picture_task_is_correct'] = 1
+
+    # STM Identity Task Success: Recognized correct identity in STM
+    mask = diff_group & (res_df['stm_distance'] < threshold)
+    res_df.loc[mask, 'stm_id_task_is_correct'] = res_df.loc[mask, 'stm_same_id']
+
+    # LTM Identity Task Success: Recognized correct identity in LTM
+    mask = diff_group & (res_df['ltm_distance'] < threshold)
+    res_df.loc[mask, 'ltm_id_task_is_correct'] = res_df.loc[mask, 'ltm_same_id']
+
+    # Overall Identity Task Success: Correct identity recognized in STM or LTM
+    mask = diff_group & (
+        ((res_df['stm_distance'] < threshold) & (res_df['stm_same_id'] == 1)) |
+        ((res_df['ltm_distance'] < threshold) & (res_df['ltm_same_id'] == 1))
+    )
+    res_df.loc[mask, 'id_task_is_correct'] = 1
+
+    # --- Unseen Group ---
+    # Image Task Success: Model didn't recognize the image
+    mask = Unseen_group & (res_df['stm_distance'] > threshold) & (res_df['ltm_distance'] > threshold)
+    res_df.loc[mask, 'picture_task_is_correct'] = 1
+
+    # STM Identity Task Success: Model didn't recognize the identity in STM
+    mask = Unseen_group & (res_df['stm_distance'] > threshold)
+    res_df.loc[mask, 'stm_id_task_is_correct'] = 1  # Success if not recognized
+
+    # LTM Identity Task Success: Model didn't recognize the identity in LTM
+    mask = Unseen_group & (res_df['ltm_distance'] > threshold)
+    res_df.loc[mask, 'ltm_id_task_is_correct'] = 1  # Success if not recognized
+
+    # Overall Identity Task Success: Identity not recognized in both STM and LTM
+    mask = Unseen_group & (res_df['stm_distance'] > threshold) & (res_df['ltm_distance'] > threshold)
+    res_df.loc[mask, 'id_task_is_correct'] = 1
 
     return res_df
 
-def evaluate_multiple_thresholds(perf_df: pd.DataFrame, thresholds: list) -> pd.DataFrame:
+# def evaluate_multiple_thresholds(perf_df, thresholds):
+#     results = []
+#     for threshold in thresholds:
+#         result_df = eval_performance_for_threshold(perf_df, threshold)
+#         results.append(result_df)
+#     combined_results = pd.concat(results, ignore_index=True)
+#     return combined_results
+
+def evaluate_multiple_thresholds(perf_df, thresholds, export_path):
     results = []
+    conditions_results = []  # To store results of familiar vs unfamiliar checks
+
     for threshold in thresholds:
-        result_df = eval_performance_for_thershold(perf_df, threshold)
+        result_df = eval_performance_for_threshold(perf_df, threshold)
         results.append(result_df)
+
+        # Perform checks for each noise-threshold combination
+        unique_noises = result_df['noise'].unique()
+        for noise in unique_noises:
+            conditions = check_familiar_vs_unfamiliar(result_df, noise, threshold)
+            conditions['noise'] = noise
+            conditions['threshold'] = threshold
+            conditions_results.append(conditions)
+
     combined_results = pd.concat(results, ignore_index=True)
+    # Optionally, save or return the conditions results as a DataFrame
+    conditions_df = pd.DataFrame(conditions_results)
+    conditions_df.to_csv(os.path.join(export_path, "familiar_vs_unfamiliar_conditions.csv"), index=False)
+
     return combined_results
+
+def check_familiar_vs_unfamiliar(performance_df, noise, threshold):
+    """
+    Checks whether for the given noise and threshold:
+    - In the person task, 'familiar' scores better than 'unfamiliar'.
+    - In the identity task, 'familiar' scores worse than 'unfamiliar'.
+    
+    Args:
+        performance_df (pd.DataFrame): The dataframe containing performance results.
+        noise (float): The noise value to filter the dataframe.
+        threshold (float): The threshold value to filter the dataframe.
+    
+    Returns:
+        dict: A dictionary indicating if conditions are met for each task.
+    """
+    # Filter dataframe for the specific noise and threshold
+    subset = performance_df[(performance_df['noise'] == noise) & (performance_df['threshold'] == threshold)]
+    
+    results = {}
+    
+    # Group by familiarity and calculate mean scores
+    familiarity_grouped = subset.groupby('familiarity')[['picture_task_is_correct', 'id_task_is_correct']].mean()
+    
+    if 'familiar' in familiarity_grouped.index and 'unfamiliar' in familiarity_grouped.index:
+        # Check conditions for the person task
+        person_task_condition = familiarity_grouped.loc['familiar', 'picture_task_is_correct'] > \
+                                familiarity_grouped.loc['unfamiliar', 'picture_task_is_correct']
+        results['person_task_condition'] = person_task_condition
+
+        # Check conditions for the identity task
+        identity_task_condition = familiarity_grouped.loc['familiar', 'id_task_is_correct'] < \
+                                  familiarity_grouped.loc['unfamiliar', 'id_task_is_correct']
+        results['identity_task_condition'] = identity_task_condition
+    else:
+        # If either 'familiar' or 'unfamiliar' group is missing
+        results['person_task_condition'] = None
+        results['identity_task_condition'] = None
+
+    return results
+
 
 ### One Function To Rule Them All ###
 
-def run_all_for_model(model, base_dir, sub_folders, long_term_memory, noise_constants, thresholds):
+def run_all_for_model(model, base_dir, sub_folders, long_term_memory, noise_constants, thresholds, export_path):
     grouped_images_df = process_folders(base_dir, sub_folders)
-    all_noises_df = simulate_different_noises(model, long_term_memory, grouped_images_df, noise_constants)
-    noises_thersholds_combined_df = evaluate_multiple_thresholds(all_noises_df, thresholds)
-    return noises_thersholds_combined_df
-
-
-### Visualization ###
-
-def calculate_success_percentage(df, correct_column):
-    total_counts = df.groupby(['familiarity', 'group']).size().reset_index(name='total')
-    success_counts = df[df[correct_column] == 1].groupby(['familiarity', 'group']).size().reset_index(name='success')
-    merged_df = pd.merge(total_counts, success_counts, on=['familiarity', 'group'], how='left')
-    merged_df['success'] = merged_df['success'].fillna(0)
-    merged_df['percentage'] = (merged_df['success'] / merged_df['total']) * 100
-    return merged_df
-
-def apply_calc(all_results_df, correct_column, noise_constants, thresholds):
-    aggregated_results = []
-
-    for noise, threshold in itertools.product(noise_constants, thresholds):
-        subset_df = all_results_df[(all_results_df['noise'] == noise) & (all_results_df['threshold'] == threshold)]
-        if not subset_df.empty:
-            success_df = calculate_success_percentage(subset_df, correct_column)
-            success_df['noise'] = noise
-            success_df['threshold'] = threshold
-            aggregated_results.append(success_df)
-
-    # Concatenate all aggregated results
-    return pd.concat(aggregated_results, ignore_index=True)
-
-def plot_results(aggregated_results_df, title, noise_constants, thresholds):
-    t_min = min(thresholds)
-    t_max = max(thresholds)
+    all_noises_df = simulate_different_noises(model, long_term_memory, grouped_images_df, noise_constants, export_path)
+    noises_thresholds_combined_df = evaluate_multiple_thresholds(all_noises_df, thresholds, export_path)
+    
     n_min = min(noise_constants)
     n_max = max(noise_constants)
+    t_min = min(thresholds)
+    t_max = max(thresholds)
+    file_name = f'{model.model_name}_threshold={t_min}-{t_max}_noise={n_min}-{n_max}_results.csv'
+    noises_thresholds_combined_df.to_csv(os.path.join(export_path, file_name))
 
-    n_rows = len(noise_constants)
-    n_cols = len(thresholds)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(50, 50), sharey=True)
-
-    handles = []
-    labels = []
-
-    for i, noise in enumerate(noise_constants):
-        for j, threshold in enumerate(thresholds):
-            ax = axes[i, j]
-            subset_df = aggregated_results_df[(aggregated_results_df['noise'] == noise) & (aggregated_results_df['threshold'] == threshold)]
-
-            if not subset_df.empty:
-                bar_plot = sns.barplot(ax=ax, x='group', y='percentage', hue='familiarity', data=subset_df,
-                                       dodge=True, palette={ 'familiar': 'orange', 'unfamiliar': 'blue'})
-                ax.set_title(f'Noise: {noise}, Threshold: {threshold}')
-                ax.set_xlabel('Group')
-                if j == 0:
-                    ax.set_ylabel('Percentage of Correct Predictions')
-                if i == 0 and j == n_cols - 1:
-                    handles, labels = ax.get_legend_handles_labels()
-                ax.legend_.remove()
-
-    fig.legend(handles, labels, loc='upper left', fontsize=18)
-    plt.suptitle(title+f"\n\n\n", fontsize=24)
-    plt.tight_layout()
-    plt.subplots_adjust(right=0.85)
-    
-    plt.savefig(f"{os.getcwd()}/code results/thershold={t_min}-{t_max}_noise={n_min}-{n_max}_{title}.png")
-    plt.show()
+    return noises_thresholds_combined_df

@@ -1,3 +1,6 @@
 code results/
 cogn_test_datasets/
 models/
+*.png
+final_vis/
+for article*
